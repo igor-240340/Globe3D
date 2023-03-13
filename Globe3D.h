@@ -1,4 +1,4 @@
-#pragma once
+п»ї#pragma once
 
 #include "Ogre.h"
 #include "OgreApplicationContext.h"
@@ -10,11 +10,11 @@
 using namespace Ogre;
 using namespace OgreBites;
 
-// Сан-Паулу.
+// РЎР°РЅ-РџР°СѓР»Сѓ.
 static const float LAT_A = -23.555771f;
 static const float LON_A = -46.639557f;
 
-// Нью-Дели.
+// РќСЊСЋ-Р”РµР»Рё.
 static const float LAT_B = 28.613830f;
 static const float LON_B = 77.208491f;
 
@@ -51,7 +51,7 @@ private:
     MeshPtr sphereMesh;
     ManualObject* lineMesh;
 
-    // Базисные векторы для плоскости, образованной векторами локаций.
+    // Р‘Р°Р·РёСЃРЅС‹Рµ РІРµРєС‚РѕСЂС‹ РґР»СЏ РїР»РѕСЃРєРѕСЃС‚Рё, РѕР±СЂР°Р·РѕРІР°РЅРЅРѕР№ РІРµРєС‚РѕСЂР°РјРё Р»РѕРєР°С†РёР№.
     Vector3f xPlaneAB;
     Vector3f yPlaneAB;
 
