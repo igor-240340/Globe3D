@@ -4,7 +4,7 @@ material Earth
 	{
 		pass
 		{
-			ambient 0.75 0.75 0.75
+			ambient 1.0 1.0 1.0
 
 			texture_unit
 			{

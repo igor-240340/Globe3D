@@ -1,169 +1,347 @@
-#define _USE_MATH_DEFINES
+п»ї#define _USE_MATH_DEFINES
 #include <cmath>
 #include <iostream>
 
 #include "Globe3D.h"
 
-static const float SPHERE_RADIUS = 30.0f;
-static const unsigned short int MERIDIANS = 36 + 1; // Дополнительный меридиан, совпадающий со 180-м, чтобы замкнуть текстуру.
-static const unsigned short int PARALLELS = 17 + 2; // Две дополнительные параллели для текстурирования полюсов (все их точки будут сведены в полюс).
+static const float EARTH_RADIUS_IN_UNITS = 30.0f;
+static const float EARTH_RADIUS_IN_KM = 6371.0f;
+static const float UNIT_TO_KM = EARTH_RADIUS_IN_KM / EARTH_RADIUS_IN_UNITS;
+
+static const unsigned short int MERIDIANS = 36 + 1; // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Р№ РјРµСЂРёРґРёР°РЅ, СЃРѕРІРїР°РґР°СЋС‰РёР№ СЃРѕ 180-Рј, С‡С‚РѕР±С‹ РІРёР·СѓР°Р»СЊРЅРѕ Р·Р°РјРєРЅСѓС‚СЊ С‚РµРєСЃС‚СѓСЂСѓ.
+static const unsigned short int PARALLELS = 17 + 2; // Р”РІРµ РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Рµ РїР°СЂР°Р»Р»РµР»Рё РґР»СЏ С‚РµРєСЃС‚СѓСЂРёСЂРѕРІР°РЅРёСЏ РїРѕР»СЋСЃРѕРІ (РІСЃРµ РёС… С‚РѕС‡РєРё Р±СѓРґСѓС‚ СЃРІРµРґРµРЅС‹ РІ РїРѕР»СЋСЃС‹).
+
+static const float DEG_TO_RAD = M_PI / 180.0f;
+static const float RAD_TO_DEG = 180.0f / M_PI;
 
 //
+// РћР±С‰Р°СЏ РёРЅРёС†РёР°Р»РёР·Р°С†РёСЏ РїСЂРёР»РѕР¶РµРЅРёСЏ Рё РЅР°СЃС‚СЂРѕР№РєР° СЃС†РµРЅС‹.
 //
-//
-Globe3D::Globe3D() : ApplicationContext("Globe3D")
-{
-}
-
-//
-//
-//
-bool Globe3D::keyPressed(const KeyboardEvent& evt)
-{
-    camMan->keyPressed(evt);
-    return true;
-}
-
-//
-//
-//
-bool Globe3D::keyReleased(const KeyboardEvent& evt)
-{
-    camMan->keyReleased(evt);
-    return true;
-}
-
-//
-//
-//
-bool Globe3D::mousePressed(const MouseButtonEvent& evt)
-{
-    camMan->mousePressed(evt);
-    return true;
-}
-
-bool Globe3D::mouseReleased(const MouseButtonEvent& evt)
-{
-    camMan->mouseReleased(evt);
-    return true;
-}
-
-//
-//
-//
-bool Globe3D::mouseMoved(const MouseMotionEvent& evt) {
-    camMan->mouseMoved(evt);
-    return true;
-}
-
-//
-//
-//
-bool Globe3D::mouseWheelRolled(const MouseWheelEvent& evt) {
-    camMan->mouseWheelRolled(evt);
-    return true;
-}
-
-//
-//
-//
-void Globe3D::setup()
-{
+void Globe3D::setup() {
     ResourceGroupManager::getSingleton().addResourceLocation("./Data", "FileSystem");
+    // РќРµРѕР±С…РѕРґРёРј РґР»СЏ С‚СЂРµСЏ, РєРѕС‚РѕСЂС‹Р№ РјС‹ РёСЃРїРѕР»СЊР·СѓРµРј РІ СЃРІСЏР·РєРµ СЃ ImGui.
+    ResourceGroupManager::getSingleton().addResourceLocation("./Data/SdkTrays.zip", "Zip");
+    ResourceGroupManager::getSingleton().addResourceLocation("./Data/SpaceSkyBox.zip", "Zip");
 
     ApplicationContext::setup();
+
     addInputListener(this);
+    getRenderWindow()->addListener(this);   // РЎР»СѓС€Р°РµРј preViewportUpdate.
 
     Root* root = getRoot();
-    SceneManager* scnMgr = root->createSceneManager();
+    scnMgr = root->createSceneManager();
 
-    RTShader::ShaderGenerator* shadergen = RTShader::ShaderGenerator::getSingletonPtr();
-    shadergen->addSceneManager(scnMgr);
+    RTShader::ShaderGenerator* shaderGen = RTShader::ShaderGenerator::getSingletonPtr();
+    shaderGen->addSceneManager(scnMgr);
 
-    scnMgr->setAmbientLight(ColourValue(1, 1, 1));
+    SceneNode* cam = PrepareCam();
+    PrepareLight(cam);
 
-    //Light* light = scnMgr->createLight("light");
-    //SceneNode* lightNode = scnMgr->getRootSceneNode()->createChildSceneNode();
-    //lightNode->attachObject(light);
-    //lightNode->setPosition(20, 80, 100);
+    CreateGlobe();
 
-    Camera* cam = scnMgr->createCamera("cam");
-    cam->setNearClipDistance(10);
+    CreatePlacemarks();
+    PreparePathLine();
+
+    RecalcDistanceKm(placeANode->getPosition(), placeBNode->getPosition());
+    RebuildSurfacePath(placeANode->getPosition(), placeBNode->getPosition());
+
+    PrepareImGui();
+
+    scnMgr->setSkyBox(true, "SpaceSkyBox");
+}
+
+//
+// РЎРѕР·РґР°РµС‚ РїРѕР»СЏ РІРІРѕРґР°/РІС‹РІРѕРґР° РґР»СЏ РїР°СЂР°РјРµС‚СЂРѕРІ Р»РѕРєР°С†РёР№.
+//
+void Globe3D::CreateImGuiOverlay() {
+    static int location = 0;
+    ImGuiIO& io = ImGui::GetIO();
+    ImGuiWindowFlags window_flags =
+        ImGuiWindowFlags_NoDecoration
+        | ImGuiWindowFlags_AlwaysAutoResize
+        | ImGuiWindowFlags_NoSavedSettings
+        | ImGuiWindowFlags_NoFocusOnAppearing
+        | ImGuiWindowFlags_NoNav;
+
+    if (location >= 0) {
+        const float PAD = 10.0f;
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImVec2 work_pos = viewport->WorkPos;
+        ImVec2 work_size = viewport->WorkSize;
+        ImVec2 window_pos, window_pos_pivot;
+        window_pos.x = (location & 1) ? (work_pos.x + work_size.x - PAD) : (work_pos.x + PAD);
+        window_pos.y = (location & 2) ? (work_pos.y + work_size.y - PAD) : (work_pos.y + PAD);
+        window_pos_pivot.x = (location & 1) ? 1.0f : 0.0f;
+        window_pos_pivot.y = (location & 2) ? 1.0f : 0.0f;
+        ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
+        window_flags |= ImGuiWindowFlags_NoMove;
+    }
+    else if (location == -2) {
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        window_flags |= ImGuiWindowFlags_NoMove;
+    }
+
+    ImGui::SetNextWindowBgAlpha(0.35f);
+    if (ImGui::Begin("Place overlay.", nullptr, window_flags)) {
+        ImGui::Text("Zoom: use mouse wheel.");
+        ImGui::Text("Rotation: press left mouse and move.");
+
+        bool locIsChanged = false;
+
+        ImGui::Separator();
+        ImGui::Text("Place A (Lat, Lon)");
+        if (ImGui::InputFloat2("##1", placeALatLon)) {
+            locIsChanged = true;
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Place B (Lat, Lon)");
+        if (ImGui::InputFloat2("##2", placeBLatLon)) {
+            locIsChanged = true;
+        }
+
+        if (locIsChanged) {
+            UpdatePlaceFeatures();
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Surface distance: %.2f km.", surfaceDistanceKm);
+        ImGui::Text("Direct distance: %.2f km.", directDistanceKm);
+    }
+
+    ImGui::End();
+}
+
+//
+//
+//
+void Globe3D::UpdatePlaceFeatures() {
+    Vector3f placeAPos = LatLonToCartesian(placeALatLon[0], placeALatLon[1], EARTH_RADIUS_IN_UNITS);
+    Vector3f placeBPos = LatLonToCartesian(placeBLatLon[0], placeBLatLon[1], EARTH_RADIUS_IN_UNITS);
+
+    placeANode->setPosition(placeAPos);
+    placeBNode->setPosition(placeBPos);
+
+    RecalcDistanceKm(placeAPos, placeBPos);
+    RebuildSurfacePath(placeAPos, placeBPos);
+}
+
+void Globe3D::RecalcDistanceKm(Vector3f a, Vector3f b) {
+    surfaceDistanceKm = CalcSurfaceDistance(a, b) * UNIT_TO_KM;
+    directDistanceKm = (a - b).length() * UNIT_TO_KM;
+}
+
+//
+// https://ogrecave.github.io/ogre/api/13/class_ogre_1_1_render_target_listener.html#ae0f7f5f1cdf13b5870d0da1cc8f1bd64
+//
+void Globe3D::preViewportUpdate(const RenderTargetViewportEvent& evt) {
+    if (!evt.source->getOverlaysEnabled()) return;
+    if (!trayMgr->getTraysLayer()->isVisible()) return;
+
+    ImGuiOverlay::NewFrame();
+    CreateImGuiOverlay();
+}
+
+//
+// РРЅРёС†РёР°Р»РёР·Р°С†РёСЏ ImGui.
+// https://github.com/OGRECave/ogre/blob/9dfd6c9dcdd304615d4e469e24cf130fa992af30/Samples/Simple/include/ImGuiDemo.h#L42
+//
+void Globe3D::PrepareImGui() {
+    trayMgr.reset(new TrayManager("TrayManager", getRenderWindow(), this));
+
+    auto imguiOverlay = new ImGuiOverlay();
+
+    // Handle DPI scaling
+    float vpScale = OverlayManager::getSingleton().getPixelRatio();
+    ImGui::GetIO().FontGlobalScale = std::round(vpScale); // Default font does not work with fractional scaling.
+    ImGui::GetStyle().ScaleAllSizes(vpScale);
+
+    imguiOverlay->setZOrder(300);
+    imguiOverlay->show();
+    OverlayManager::getSingleton().addOverlay(imguiOverlay);
+
+    scnMgr->addRenderQueueListener(mOverlaySystem);
+
+    imGuiListener.reset(new ImGuiInputListener());
+    listenerChain = InputListenerChain({ trayMgr.get(), imGuiListener.get(), camMan.get() });
+
+    trayMgr->hideCursor();
+}
+
+//
+//
+//
+void Globe3D::CreatePlacemarks() {
+    BuildSphereMesh("PlacemarkMesh", 0.5f);
+
+    Entity* placeAEntity = scnMgr->createEntity("PlaceA", "PlacemarkMesh");
+    placeAEntity->setMaterialName("Red", "General");
+    placeANode = scnMgr->getRootSceneNode()->createChildSceneNode();
+    placeANode->attachObject(placeAEntity);
+    placeAEntity->getSubEntity(0)->getMaterial()->getTechnique(0)->getPass(0)->setPolygonMode(PM_SOLID);
+    placeANode->setPosition(LatLonToCartesian(placeALatLon[0], placeALatLon[1], EARTH_RADIUS_IN_UNITS));
+
+    Entity* placeBEntity = scnMgr->createEntity("PlaceB", "PlacemarkMesh");
+    placeBEntity->setMaterialName("Red", "General");
+    placeBNode = scnMgr->getRootSceneNode()->createChildSceneNode();
+    placeBNode->attachObject(placeBEntity);
+    placeBEntity->getSubEntity(0)->getMaterial()->getTechnique(0)->getPass(0)->setPolygonMode(PM_SOLID);
+    placeBNode->setPosition(LatLonToCartesian(placeBLatLon[0], placeBLatLon[1], EARTH_RADIUS_IN_UNITS));
+}
+
+//
+//
+//
+void Globe3D::CreateGlobe() {
+    BuildSphereMesh("GlobeMesh", EARTH_RADIUS_IN_UNITS);
+
+    Entity* globeEntity = scnMgr->createEntity("Globe", "GlobeMesh");
+    globeEntity->setMaterialName("Earth", "General");
+    SceneNode* globeNode = scnMgr->getRootSceneNode()->createChildSceneNode();
+    globeNode->attachObject(globeEntity);
+    globeEntity->getSubEntity(0)->getMaterial()->getTechnique(0)->getPass(0)->setPolygonMode(PM_SOLID);
+}
+
+//
+// РЎРѕР·РґР°РµС‚ Рё СЃРІСЏР·С‹РІР°РµС‚ РјРµС€, РЅРѕРґСѓ Рё РјР°С‚РµСЂРёР°Р» РґР»СЏ Р»РёРЅРёРё, РєРѕС‚РѕСЂР°СЏ Р±СѓРґРµС‚ РїСЂРµРґСЃС‚Р°РІР»СЏС‚СЊ РїСѓС‚СЊ РјРµР¶РґСѓ Р»РѕРєР°С†РёСЏРјРё.
+//
+void Globe3D::PreparePathLine() {
+    lineMesh = scnMgr->createManualObject("LineMesh");
+    SceneNode* lineNode = scnMgr->getRootSceneNode()->createChildSceneNode("PathAB");
+
+    MaterialPtr lineMaterial = MaterialManager::getSingleton().create("LineMaterial", "General");
+    lineMaterial->setReceiveShadows(false);
+    lineMaterial->getTechnique(0)->setLightingEnabled(true);
+    lineMaterial->getTechnique(0)->getPass(0)->setDiffuse(1, 0, 0, 0);
+    lineMaterial->getTechnique(0)->getPass(0)->setAmbient(1, 0, 0);
+    lineMaterial->getTechnique(0)->getPass(0)->setSelfIllumination(1, 0, 0);
+
+    lineNode->attachObject(lineMesh);
+}
+
+//
+//
+//
+SceneNode* Globe3D::PrepareCam() {
+    Camera* cam = scnMgr->createCamera("MainCamera");
+    cam->setNearClipDistance(5);
     cam->setAutoAspectRatio(true);
-    //cam->setProjectionType(PT_ORTHOGRAPHIC);
 
     SceneNode* camNode = scnMgr->getRootSceneNode()->createChildSceneNode();
     camNode->attachObject(cam);
     camNode->setPosition(0, 0, 0);
-    //camNode->lookAt(Ogre::Vector3(0, -30, 0), Ogre::Node::TS_PARENT);
 
     camMan.reset(new CameraMan(camNode));
     camMan->setStyle(OgreBites::CS_ORBIT);
 
     getRenderWindow()->addViewport(cam);
 
-    //
-    /*auto tex = TextureManager::getSingleton().loadImage(CIRCLES_MATERIAL, RGN_DEFAULT, bmap);
-    MaterialPtr material = MaterialManager::getSingleton().create(CIRCLES_MATERIAL, RGN_DEFAULT);
-    auto texLayer = material->getTechnique(0)->getPass(0)->createTextureUnitState();
-    texLayer->setTexture(tex);
-    texLayer->setTextureAddressingMode(TextureUnitState::TAM_CLAMP);
-    material->setSceneBlending(SBT_ADD);
-    material->setLightingEnabled(false);
-    material->setDepthWriteEnabled(false);*/
-    //
-
-    GenerateSphereMesh("sphere", SPHERE_RADIUS);
-    Entity* sphereEntity = scnMgr->createEntity("Globe", "sphere");
-    sphereEntity->setMaterialName("Earth", "General");
-    SceneNode* sphereNode = scnMgr->getRootSceneNode()->createChildSceneNode();
-    sphereNode->attachObject(sphereEntity);
-    //sphereNode->yaw(Degree(-50));
-    //sphereNode->pitch(Degree(-10));
-
-    Pass* pass = sphereEntity->getSubEntity(0)->getMaterial()->getTechnique(0)->getPass(0);
-    pass->setPolygonMode(PM_SOLID);
+    return camNode;
 }
 
 //
-// Создает меш для сферы.
 //
-void Globe3D::GenerateSphereMesh(std::string meshName, float radius) {
-    sphereMesh = MeshManager::getSingleton().createManual(meshName, RGN_DEFAULT);
-    sphereMesh->_setBounds(AxisAlignedBox({ -100, -100, 0 }, { 100, 100, 0 }));
+//
+void Globe3D::PrepareLight(SceneNode* node) {
+    //scnMgr->setAmbientLight(ColourValue(0.1f, 0.1f, 0.1f));
 
-    // Меридиан с индексом 0 мы берем за 180-й, а не за нулевой, потому что
-    // нулевая текстурная координата для файла с текстурой земли соответствует 180-му меридиану,
-    // а нулевому меридиану соответствует середина текстуры.
-    // Поэтому мы должны начать с 180-го меридиана, чтобы на момент,
-    // когда мы доберемся в построении до 0-го меридиана, у нас были вычислены правильные текстурные координаты, соответствующие половине текстуры Земли.
-    float angleStep = M_PI / (PARALLELS - 1);                   // Шаг общий для меридианов и параллелей.
+    Light* light = scnMgr->createLight("Sun");
+    node->attachObject(light);
+}
+
+//
+// РџРµСЂРµСЃС‚СЂР°РёРІР°РµС‚ РїСѓС‚СЊ РёР· РїСѓРЅРєС‚Р° A РІ РїСѓРЅРєС‚ B РїРѕ РїРѕРІРµСЂС…РЅРѕСЃС‚Рё СЃС„РµСЂС‹ РїСЂРё РёР·РјРµРЅРµРЅРёРё РєРѕРѕСЂРґРёРЅР°С‚.
+// РџРѕСЃРєРѕР»СЊРєСѓ Р·Р° РіРµРѕРјРµС‚СЂРёС‡РµСЃРєСѓСЋ РјРѕРґРµР»СЊ Р—РµРјР»Рё РјС‹ РІР·СЏР»Рё СЃС„РµСЂСѓ, С‚Рѕ СЌС‚РѕС‚ РїСѓС‚СЊ СЌРєРІРёРІР°Р»РµРЅС‚РµРЅ РґСѓРіРµ РѕРєСЂСѓР¶РЅРѕСЃС‚Рё РІ РїР»РѕСЃРєРѕСЃС‚Рё РІРµРєС‚РѕСЂРѕРІ A Рё B.
+//
+void Globe3D::RebuildSurfacePath(Vector3f a, Vector3f b) {
+    lineMesh->clear();
+    lineMesh->begin("LineMaterial", RenderOperation::OT_LINE_STRIP);
+
+    RecalcPlaneAB(a, b);
+    float angle = GetAngleBetweenVectors(a, b);
+    const int edges = 15;
+    const int vertices = edges + 1;
+    const float angleStep = angle / edges;
+    for (int i = 0; i < vertices; i++) {
+        float phi = i * angleStep;
+
+        float x = cos(phi) * (EARTH_RADIUS_IN_UNITS + 0.05f);
+        float y = sin(phi) * (EARTH_RADIUS_IN_UNITS + 0.05f);
+
+        // РќРµ Р·Р°Р±С‹РІР°РµРј, С‡С‚Рѕ РґСѓРіСѓ РјС‹ СЂРёСЃСѓРµРј РІ РїР»РѕСЃРєРѕСЃС‚Рё AB.
+        Vector3f pos = xPlaneAB * x + yPlaneAB * y;
+        lineMesh->position(pos);
+    }
+
+    lineMesh->end();
+}
+
+//
+// Р’С‹С‡РёСЃР»СЏРµС‚ РєСЂР°С‚С‡Р°Р№С€РµРµ СЂР°СЃСЃС‚РѕСЏРЅРёРµ РјРµР¶РґСѓ С‚РѕС‡РєР°РјРё РїРѕ РїРѕРІРµСЂС…РЅРѕСЃС‚Рё СЃС„РµСЂС‹.
+//
+float Globe3D::CalcSurfaceDistance(Vector3f a, Vector3f b) {
+    return GetAngleBetweenVectors(a, b) * EARTH_RADIUS_IN_UNITS;
+}
+
+//
+// Р’С‹С‡РёСЃР»СЏРµС‚ Р±Р°Р·РёСЃРЅС‹Рµ РІРµРєС‚РѕСЂС‹ РґР»СЏ РїР»РѕСЃРєРѕСЃС‚Рё, РѕР±СЂР°Р·РѕРІР°РЅРЅРѕР№ РІРµРєС‚РѕСЂР°РјРё Р»РѕРєР°С†РёР№.
+//
+void Globe3D::RecalcPlaneAB(Vector3f a, Vector3f b) {
+    // Р•РґРёРЅРёС‡РЅС‹Р№ РІРµРєС‚РѕСЂР° A РѕРїСЂРµРґРµР»СЏРµС‚ РѕСЃСЊ X.
+    xPlaneAB = a.normalisedCopy();
+
+    // РџРµСЂРїРµРЅРґРёРєСѓР»СЏСЂРЅС‹Р№ Рє X РІРµРєС‚РѕСЂ РѕРїСЂРµРґРµР»СЏРµС‚ РѕСЃСЊ Y.
+    Vector3f vectorBProjX = b.dotProduct(xPlaneAB) * xPlaneAB;
+    yPlaneAB = (b - vectorBProjX).normalisedCopy();
+}
+
+//
+// Р’С‹С‡РёСЃР»СЏРµС‚ СѓРіРѕР» РјРµР¶РґСѓ РІРµРєС‚РѕСЂР°РјРё.
+// dot(A,B) = |A|*|B|*cos(angle).
+//
+float Globe3D::GetAngleBetweenVectors(Vector3f a, Vector3f b) {
+    return acos(a.dotProduct(b) / (a.length() * b.length()));
+}
+
+//
+// РЎС‚СЂРѕРёС‚ РјРµС€ РґР»СЏ С‚РµРєСЃС‚СѓСЂРёСЂСѓРµРјРѕР№ СЃС„РµСЂС‹.
+//
+void Globe3D::BuildSphereMesh(std::string meshName, float radius) {
+    // РњРµСЂРёРґРёР°РЅ СЃ РёРЅРґРµРєСЃРѕРј 0 РјС‹ Р±РµСЂРµРј Р·Р° 180-Р№, Р° РЅРµ Р·Р° РЅСѓР»РµРІРѕР№, РїРѕС‚РѕРјСѓ С‡С‚Рѕ
+    // РЅСѓР»РµРІР°СЏ С‚РµРєСЃС‚СѓСЂРЅР°СЏ РєРѕРѕСЂРґРёРЅР°С‚Р° РґР»СЏ С„Р°Р№Р»Р° СЃ С‚РµРєСЃС‚СѓСЂРѕР№ Р·РµРјР»Рё СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓРµС‚ 180-РјСѓ РјРµСЂРёРґРёР°РЅСѓ,
+    // Р° РЅСѓР»РµРІРѕРјСѓ РјРµСЂРёРґРёР°РЅСѓ СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓРµС‚ СЃРµСЂРµРґРёРЅР° С‚РµРєСЃС‚СѓСЂС‹.
+    // РџРѕСЌС‚РѕРјСѓ РјС‹ РґРѕР»Р¶РЅС‹ РЅР°С‡Р°С‚СЊ СЃ 180-РіРѕ РјРµСЂРёРґРёР°РЅР°, С‡С‚РѕР±С‹ РЅР° РјРѕРјРµРЅС‚,
+    // РєРѕРіРґР° РјС‹ РґРѕР±РµСЂРµРјСЃСЏ РІ РїРѕСЃС‚СЂРѕРµРЅРёРё РґРѕ 0-РіРѕ РјРµСЂРёРґРёР°РЅР°, Сѓ РЅР°СЃ Р±С‹Р»Рё РІС‹С‡РёСЃР»РµРЅС‹ РїСЂР°РІРёР»СЊРЅС‹Рµ С‚РµРєСЃС‚СѓСЂРЅС‹Рµ РєРѕРѕСЂРґРёРЅР°С‚С‹, СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰РёРµ РїРѕР»РѕРІРёРЅРµ С‚РµРєСЃС‚СѓСЂС‹ Р—РµРјР»Рё.
+    float angleStep = M_PI / (PARALLELS - 1);                   // РЁР°Рі РѕР±С‰РёР№ РґР»СЏ РјРµСЂРёРґРёР°РЅРѕРІ Рё РїР°СЂР°Р»Р»РµР»РµР№.
     const int vertexCount = MERIDIANS * PARALLELS;
-    float vertices[vertexCount * (3 + 3 + 2)];                  // (vertex, normal, texcoord).
-    int verticesIndex = 0;                                      // Сквозной индекс по массиву vertices.
+    float* vertices = new float[vertexCount * (3 + 3 + 2)];     // (vertex, normal, texcoord).
+    int verticesIndex = 0;                                      // РЎРєРІРѕР·РЅРѕР№ РёРЅРґРµРєСЃ РїРѕ РјР°СЃСЃРёРІСѓ vertices.
 
-    float texcoordXStep = 1.0f / (MERIDIANS - 1);   // Шаг при котором между меридианами и их текстурными координатами есть отображение [0..1]->[0..MERIDIANS-1].
+    // РЁР°Рі, РїСЂРё РєРѕС‚РѕСЂРѕРј РјРµР¶РґСѓ РјРµСЂРёРґРёР°РЅР°РјРё/РїР°СЂР°Р»Р»РµР»СЏРјРё Рё РёС… С‚РµРєСЃС‚СѓСЂРЅС‹РјРё РєРѕРѕСЂРґРёРЅР°С‚Р°РјРё
+    // СЃСѓС‰РµСЃС‚РІСѓРµС‚ РѕС‚РѕР±СЂР°Р¶РµРЅРёРµ РІРёРґР° [0..1]->[0..MERIDIANS/PARALLELS-1],
+    // РіРґРµ MERIDIANS/PARALLELS-1 - РёРЅРґРµРєСЃ РїРѕСЃР»РµРґРЅРµРіРѕ РјРµСЂРёРґРёР°РЅР°/РїР°СЂР°Р»Р»РµР»Рё (Р·РґРµСЃСЊ "MERIDIANS/PARALLELS" - СЌС‚Рѕ РЅРµ Р°СЂРёС„РјРµС‚РёС‡РµСЃРєРѕРµ РґРµР»РµРЅРёРµ).
+    float texcoordXStep = 1.0f / (MERIDIANS - 1);
     float texcoordYStep = 1.0f / (PARALLELS - 1);
 
     const int triangleCount = (PARALLELS - 1) * (MERIDIANS - 1) * 2;
-    uint16 triangles[triangleCount * 3];                    // Индексы, образующие треугольные полигоны.
-    int vertexIndex = 0;                                    // Абстрактный индекс, определяющий порядковый номер вершины.
-    int trianglesIndex = 0;                                 // Сквозной индекс по массиву triangles.
+    uint16* triangles = new uint16[triangleCount * 3];      // РРЅРґРµРєСЃС‹, РѕР±СЂР°Р·СѓСЋС‰РёРµ С‚СЂРµСѓРіРѕР»СЊРЅС‹Рµ РїРѕР»РёРіРѕРЅС‹.
+    int vertexIndex = 0;                                    // РђР±СЃС‚СЂР°РєС‚РЅС‹Р№ РёРЅРґРµРєСЃ, РѕРїСЂРµРґРµР»СЏСЋС‰РёР№ РїРѕСЂСЏРґРєРѕРІС‹Р№ РЅРѕРјРµСЂ РІРµСЂС€РёРЅС‹.
+    int trianglesIndex = 0;                                 // РЎРєРІРѕР·РЅРѕР№ РёРЅРґРµРєСЃ РїРѕ РјР°СЃСЃРёРІСѓ triangles.
     for (int i = 0; i < MERIDIANS; i++) {
-        for (int j = 0; j < PARALLELS; j++) {   // Для каждой параллели j вычисляет вершину, лежащую на мередиане i.
-            // Вектор +Z, через который проходит нулевой меридиан, смотрит в камеру,
-            // а начать построение мы должны со 180-го меридиана.
-            // Поэтому начинаем c вектора -Z, который лежит в отрицательной полуплоскости, то есть - с угла 3*(Pi/2).
+        for (int j = 0; j < PARALLELS; j++) {   // Р”Р»СЏ РєР°Р¶РґРѕР№ РїР°СЂР°Р»Р»РµР»Рё j РІС‹С‡РёСЃР»СЏРµС‚ РІРµСЂС€РёРЅСѓ, Р»РµР¶Р°С‰СѓСЋ РЅР° РјРµСЂРµРґРёР°РЅРµ i.
+            // Р’РµРєС‚РѕСЂ +Z, С‡РµСЂРµР· РєРѕС‚РѕСЂС‹Р№ РїСЂРѕС…РѕРґРёС‚ РЅСѓР»РµРІРѕР№ РјРµСЂРёРґРёР°РЅ, СЃРјРѕС‚СЂРёС‚ РІ РєР°РјРµСЂСѓ,
+            // Р° РЅР°С‡Р°С‚СЊ РїРѕСЃС‚СЂРѕРµРЅРёРµ РјС‹ РґРѕР»Р¶РЅС‹ СЃРѕ 180-РіРѕ РјРµСЂРёРґРёР°РЅР°.
+            // РџРѕСЌС‚РѕРјСѓ РЅР°С‡РёРЅР°РµРј c РІРµРєС‚РѕСЂР° -Z, РєРѕС‚РѕСЂС‹Р№ Р»РµР¶РёС‚ РІ РѕС‚СЂРёС†Р°С‚РµР»СЊРЅРѕР№ РїРѕР»СѓРїР»РѕСЃРєРѕСЃС‚Рё, С‚Рѕ РµСЃС‚СЊ - СЃ СѓРіР»Р° 3*(Pi/2).
             float theta = angleStep * j;
             float phi = 3 * (M_PI / 2) - (angleStep * i);
 
-            // Вершина.
+            // Р’РµСЂС€РёРЅР°.
             Vector3f v = SphericalToCartesian(radius, theta, phi);
             vertices[verticesIndex++] = v.x;
             vertices[verticesIndex++] = v.y;
             vertices[verticesIndex++] = v.z;
 
-            // Нормаль.
+            // РќРѕСЂРјР°Р»СЊ.
             Vector3f n = v.normalisedCopy();
             vertices[verticesIndex++] = n.x;
             vertices[verticesIndex++] = n.y;
@@ -172,21 +350,25 @@ void Globe3D::GenerateSphereMesh(std::string meshName, float radius) {
             vertices[verticesIndex++] = texcoordXStep * i;
             vertices[verticesIndex++] = texcoordYStep * j;
 
-            // Задаем индексы треугольников. Обход вершин для лицевых сторон - CCW.
-            // Нулевую параллель и последний меридиан пропускаем.
+            // Р—Р°РґР°РµРј РёРЅРґРµРєСЃС‹ С‚СЂРµСѓРіРѕР»СЊРЅРёРєРѕРІ. РћР±С…РѕРґ РІРµСЂС€РёРЅ РґР»СЏ Р»РёС†РµРІС‹С… СЃС‚РѕСЂРѕРЅ - CCW.
+            // РќСѓР»РµРІСѓСЋ РїР°СЂР°Р»Р»РµР»СЊ Рё РїРѕСЃР»РµРґРЅРёР№ РјРµСЂРёРґРёР°РЅ РїСЂРѕРїСѓСЃРєР°РµРј.
             if (i != MERIDIANS - 1 && j != 0) {
                 triangles[trianglesIndex++] = vertexIndex;
-                triangles[trianglesIndex++] = GetRightSiblingIndex(vertexIndex, PARALLELS, vertexCount);
-                triangles[trianglesIndex++] = GetUpSiblingIndex(GetRightSiblingIndex(vertexIndex, PARALLELS, vertexCount));
+                triangles[trianglesIndex++] = GetRightSiblingIndex(vertexIndex, vertexCount);
+                triangles[trianglesIndex++] = GetUpSiblingIndex(GetRightSiblingIndex(vertexIndex, vertexCount));
 
                 triangles[trianglesIndex++] = vertexIndex;
-                triangles[trianglesIndex++] = GetUpSiblingIndex(GetRightSiblingIndex(vertexIndex, PARALLELS, vertexCount));
+                triangles[trianglesIndex++] = GetUpSiblingIndex(GetRightSiblingIndex(vertexIndex, vertexCount));
                 triangles[trianglesIndex++] = GetUpSiblingIndex(vertexIndex);
             }
 
             vertexIndex++;
         }
     }
+
+    // Р Р°Р±РѕС‚Р° СЃ Р°РїРїР°СЂР°С‚РЅС‹РјРё Р±СѓС„РµСЂР°РјРё СЃРїРµС†РёС„РёС‡РЅР°СЏ РґР»СЏ OGRE.
+    sphereMesh = MeshManager::getSingleton().createManual(meshName, RGN_DEFAULT);
+    sphereMesh->_setBounds(AxisAlignedBox({ -100, -100, 0 }, { 100, 100, 0 }));
 
     sphereMesh->sharedVertexData = new VertexData();
     sphereMesh->sharedVertexData->vertexCount = vertexCount;
@@ -212,15 +394,29 @@ void Globe3D::GenerateSphereMesh(std::string meshName, float radius) {
     sub->indexData->indexStart = 0;
 
     sphereMesh->load();
+
+    delete[] vertices;
+    delete[] triangles;
 }
 
 //
-// Возвращает радиус-вектор точки, заданной в сферической СК.
+// РџСЂРµРѕР±СЂР°Р·СѓРµС‚ С€РёСЂРѕС‚Сѓ/РґРѕР»РіРѕС‚Сѓ РІ РІРµРєС‚РѕСЂ.
+// Р’С…РѕРґРЅС‹Рµ СѓРіР»С‹ РѕР¶РёРґР°СЋС‚СЃСЏ РІ РіСЂР°РґСѓСЃР°С….
+//
+Vector3f Globe3D::LatLonToCartesian(float lat, float lon, float rho) {
+    float theta = 90 - lat;
+    float phi = (lon > 90) ? (450 - lon) : (90 - lon); // Р”РѕР»РіРѕС‚Сѓ РІ РїРµСЂРІРѕР№ С‡РµС‚РІРµСЂС‚Рё РѕР±СЂР°Р±Р°С‚С‹РІР°РµРј РѕС‚РґРµР»СЊРЅРѕ: 360 - (lon - 90) = 450 - lon.
+
+    return SphericalToCartesian(rho, theta * DEG_TO_RAD, phi * DEG_TO_RAD);
+}
+
+//
+// Р’РѕР·РІСЂР°С‰Р°РµС‚ СЂР°РґРёСѓСЃ-РІРµРєС‚РѕСЂ С‚РѕС‡РєРё, Р·Р°РґР°РЅРЅРѕР№ РІ СЃС„РµСЂРёС‡РµСЃРєРѕР№ РЎРљ.
 //
 Vector3f Globe3D::SphericalToCartesian(float rho, float theta, float phi) {
     float y = cos(theta) * rho;
 
-    float projXZ = sin(theta) * rho; // Величина проекции вектора на плоскость XZ.
+    float projXZ = sin(theta) * rho; // Р’РµР»РёС‡РёРЅР° РїСЂРѕРµРєС†РёРё РІРµРєС‚РѕСЂР° РЅР° РїР»РѕСЃРєРѕСЃС‚СЊ XZ.
     float x = cos(phi) * projXZ;
     float z = sin(phi) * projXZ;
 
@@ -228,15 +424,67 @@ Vector3f Globe3D::SphericalToCartesian(float rho, float theta, float phi) {
 }
 
 //
-// Возвращает индекс соседней вершины с правого меридиана.
+// Р’РѕР·РІСЂР°С‰Р°РµС‚ РёРЅРґРµРєСЃ СЃРѕСЃРµРґРЅРµР№ РІРµСЂС€РёРЅС‹ СЃ РїСЂР°РІРѕРіРѕ РјРµСЂРёРґРёР°РЅР°.
 //
-int Globe3D::GetRightSiblingIndex(int index, int PARALLELS, int vertexCount) {
+int Globe3D::GetRightSiblingIndex(int index, int vertexCount) {
     return index + PARALLELS;
 }
 
 //
-// Возвращает индекс соседней вершины с верхней параллели.
+// Р’РѕР·РІСЂР°С‰Р°РµС‚ РёРЅРґРµРєСЃ СЃРѕСЃРµРґРЅРµР№ РІРµСЂС€РёРЅС‹ СЃ РІРµСЂС…РЅРµР№ РїР°СЂР°Р»Р»РµР»Рё.
 //
 int Globe3D::GetUpSiblingIndex(int index) {
     return index - 1;
+}
+
+//
+// РЎРѕР·РґР°РµС‚ РјРµС‚РєРё РґРѕР»РіРѕС‚С‹ РЅР° РєР°Р¶РґС‹Р№ РјРµСЂРёРґРёР°РЅ Рё РїСЂРёРІСЏР·С‹РІР°РµС‚ Рє РЅРѕРґРµ.
+// NOTE: РўСЂРµР±СѓРµС‚СЃСЏ РґР°Р»СЊРЅРµР№С€Р°СЏ СЂРµР°Р»РёР·Р°С†РёСЏ РІР·Р°РёРјРѕРґРµР№СЃС‚РІРёСЏ СЃ РєР°РјРµСЂРѕР№, РїРѕ Р°РЅР°Р»РѕРіРёРё СЃ Google Earth.
+//
+void Globe3D::CreateLonMarks(SceneNode* node) {
+    BillboardSet* lonMarks = scnMgr->createBillboardSet("LongitudeMarks", MERIDIANS - 1); // РџСЂРѕРїСѓСЃРєР°РµРј РґРѕРї. РјРµСЂРёРґРёР°РЅ, РІРІРµРґРµРЅРЅС‹Р№ РґР»СЏ РєРѕСЂСЂРµРєС†РёРё С‚РµРєСЃС‚СѓСЂРёСЂРѕРІР°РЅРёСЏ.
+    lonMarks->setDefaultWidth(2.0f);
+    lonMarks->setDefaultHeight(2.0f);
+
+    float angleStep = 2 * M_PI / (MERIDIANS - 1);
+    float theta = M_PI_2;
+    for (int i = 0; i < MERIDIANS - 1; i++) {
+        float phi = angleStep * i;
+
+        Vector3f v = SphericalToCartesian(EARTH_RADIUS_IN_UNITS + 1, theta, phi);
+        lonMarks->createBillboard(v);
+    }
+    node->attachObject(lonMarks);
+}
+
+//
+// РЎРѕР·РґР°РµС‚ РјРµС‚РєРё С€РёСЂРѕС‚С‹ РЅР° РєР°Р¶РґСѓСЋ РїР°СЂР°Р»Р»РµР»СЊ (РІРєР»СЋС‡Р°СЏ С‚РѕС‡РєРё РїРѕР»СЋСЃРѕРІ) Рё РїСЂРёРІСЏР·С‹РІР°РµС‚ Рє РЅРѕРґРµ.
+// NOTE: РўСЂРµР±СѓРµС‚СЃСЏ РґР°Р»СЊРЅРµР№С€Р°СЏ СЂРµР°Р»РёР·Р°С†РёСЏ РІР·Р°РёРјРѕРґРµР№СЃС‚РІРёСЏ СЃ РєР°РјРµСЂРѕР№, РїРѕ Р°РЅР°Р»РѕРіРёРё СЃ Google Earth.
+//
+void Globe3D::CreateLatMarks(SceneNode* node) {
+    BillboardSet* latMarks = scnMgr->createBillboardSet("LatitudeMarks", PARALLELS);
+    latMarks->setDefaultWidth(2.0f);
+    latMarks->setDefaultHeight(2.0f);
+
+    float angleStep = M_PI / (PARALLELS - 1);
+    float phi = M_PI_2;
+    for (int i = 0; i < PARALLELS; i++) {
+        float theta = angleStep * i;
+
+        Vector3f v = SphericalToCartesian(EARTH_RADIUS_IN_UNITS + 1, theta, phi);
+        latMarks->createBillboard(v);
+    }
+    node->attachObject(latMarks);
+}
+
+//
+//
+//
+Globe3D::Globe3D() : ApplicationContext("Globe3D") {
+}
+
+//
+//
+//
+Globe3D::~Globe3D() {
 }
