@@ -291,6 +291,7 @@ void Globe3D::RecalcPlaneAB(Vector3f a, Vector3f b) {
     xPlaneAB = a.normalisedCopy();
 
     // Перпендикулярный к X вектор определяет ось Y.
+    // TODO: Отдельно обработать случай, когда между векторами 180 градусов.
     Vector3f vectorBProjX = b.dotProduct(xPlaneAB) * xPlaneAB;
     yPlaneAB = (b - vectorBProjX).normalisedCopy();
 }
