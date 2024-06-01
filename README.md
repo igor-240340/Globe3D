@@ -1,4 +1,4 @@
 # Globe3D
 
-Google Earth inspired virtual globe.
+Just a simple virtual globe with distance measuring between two locations.
 ![](docs/image.png)
